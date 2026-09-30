@@ -30,6 +30,9 @@ def handle_connection(client_sock, addr):
         while True:
             data = client_sock.recv(1024)
             if not data:
+                if username is None and client_ip not in ["127.0.0.1", "::1"]:
+                    log_event(service="ftp", source_ip=client_ip, source_port=client_port,
+                              raw_payload="Nmap TCP Port Probe / Disconnect", attack_type="recon")
                 break
             line = data.decode(errors="ignore").strip()
             if not line:
