@@ -21,8 +21,8 @@ app = Flask(__name__, static_folder="dashboard", static_url_path="")
 @app.before_request
 def inspect_and_log_dashboard():
     """Global middleware: scans headers, cookies, query, body, and URL for honeytokens or attacks."""
-    # Skip dashboard static assets and known endpoints
-    if request.path in ["/", "/index.html", "/backgroundImage.jpg", "/api/stats", "/api/events", "/api/report.pdf", "/robots.txt", "/config.js", "/.env", "/login", "/search"]:
+    # Skip dashboard polling endpoints and static background image
+    if request.path in ["/api/stats", "/api/events", "/api/report.pdf", "/backgroundImage.jpg"]:
         return None
 
     client_ip = _client_ip()
@@ -30,6 +30,7 @@ def inspect_and_log_dashboard():
     request_summary = _extract_request_summary()
     location_tag = get_honeytoken_location(request_summary)
 
+    # 1. Prioritize Honeytoken detection across ALL endpoints
     if location_tag:
         raw_payload = f"[Honeytoken Triggered via {location_tag}] {request_summary}"
         log_event(service="web", source_ip=client_ip, source_port=client_port, raw_payload=raw_payload, attack_type="honeytoken_triggered")
@@ -49,7 +50,11 @@ def inspect_and_log_dashboard():
             "message": "Debug session active. Internal system logs exposed."
         }), 200
 
-    # Log unknown paths probed by scanners/Nmap/crawlers as recon
+    # 2. Skip known web routes if no honeytoken was present
+    if request.path in ["/", "/index.html", "/robots.txt", "/config.js", "/.env", "/login", "/search"]:
+        return None
+
+    # 3. Log unknown paths probed by scanners/Nmap/crawlers as recon
     if client_ip not in ["127.0.0.1", "::1"]:
         raw_payload = f"HTTP {request.method} {request.path} | {request_summary}"
         log_event(service="web", source_ip=client_ip, source_port=client_port, raw_payload=raw_payload, attack_type="recon")

@@ -86,9 +86,9 @@ curl.exe -X POST http://localhost:5000/login -d "username=admin' OR '1'='1&passw
 ---
 
 ### **E. XSS (Cross-Site Scripting) Attack (Web Search)**
-Submits a `<script>` tag into the search box:
+Submits a `<script>` tag into the search box (URL encoded for PowerShell compatibility):
 ```powershell
-curl.exe "http://localhost:5000/search?q=<script>alert(1)</script>"
+curl.exe "http://localhost:5000/search?q=%3Cscript%3Ealert(1)%3C/script%3E"
 ```
 
 ---
