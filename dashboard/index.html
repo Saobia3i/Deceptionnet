@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DeceptionNet — Attack Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --danger: #f85149; --warn: #d29922; --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0; padding: 24px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); margin-bottom: 20px; font-size: 14px; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 20px 0; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; text-align: center;
+  }
+  .card .num { font-size: 28px; font-weight: 700; }
+  .card .label { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .alert-banner {
+    background: rgba(248,81,73,0.12); border: 1px solid var(--danger); color: var(--danger);
+    padding: 10px 16px; border-radius: 6px; margin-bottom: 16px; display: none; font-size: 14px;
+  }
+  .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .panel h3 { margin: 0 0 12px; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-sqli { background: rgba(248,81,73,0.15); color: var(--danger); }
+  .badge-xss { background: rgba(210,153,34,0.15); color: var(--warn); }
+  .badge-brute_force { background: rgba(248,81,73,0.15); color: var(--danger); }
+  .badge-port_scan { background: rgba(210,153,34,0.15); color: var(--warn); }
+  .badge-honeytoken_triggered { background: rgba(188,140,255,0.25); color: #bc8cff; border: 1px solid #bc8cff; font-weight: 700; }
+  .badge-honeytoken_session { background: rgba(188,140,255,0.15); color: #d8b4fe; border: 1px dashed #d8b4fe; }
+  .badge-recon { background: rgba(139,148,158,0.15); color: var(--muted); }
+  .btn {
+    background: var(--accent); color: #0d1117; border: none; padding: 8px 14px;
+    border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; text-decoration: none;
+  }
+  .live-dot { display: inline-block; width: 8px; height: 8px; background: var(--ok); border-radius: 50%;
+              margin-right: 6px; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div>
+    <h1>🛡️ DeceptionNet</h1>
+    <div class="subtitle"><span class="live-dot"></span>Honeypot-Based Intrusion Detection & Attacker Behavior Analysis</div>
+  </div>
+  <a class="btn" href="/api/report.pdf">Export PDF Report</a>
+</div>
+
+<div id="alertBanner" class="alert-banner"></div>
+
+<div class="stat-cards" id="statCards"></div>
+
+<div class="grid">
+  <div class="panel">
+    <h3>Attacks Over Time</h3>
+    <canvas id="timelineChart" height="90"></canvas>
+  </div>
+  <div class="panel">
+    <h3>Attack Type Breakdown</h3>
+    <canvas id="typeChart" height="90"></canvas>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h3>Live Event Log</h3>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Service</th><th>Source IP</th><th>Username</th><th>Password / Payload</th><th>Type</th></tr>
+      </thead>
+      <tbody id="eventTable"></tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h3>Top Attacker IPs</h3>
+    <canvas id="ipChart"></canvas>
+  </div>
+</div>
+
+<script>
+const ALERT_THRESHOLD = 5; // total events before banner shows
+let timelineChart, typeChart, ipChart;
+
+function badgeClass(type) { return 'badge badge-' + type; }
+
+function renderStatCards(stats) {
+  const el = document.getElementById('statCards');
+  const honeytoken = (stats.by_type.find(t => t.attack_type === 'honeytoken_triggered') || {}).c || 0;
+  const bruteForce = (stats.by_type.find(t => t.attack_type === 'brute_force') || {}).c || 0;
+  const sqli = (stats.by_type.find(t => t.attack_type === 'sqli') || {}).c || 0;
+  const xss = (stats.by_type.find(t => t.attack_type === 'xss') || {}).c || 0;
+  const scans = (stats.by_type.find(t => t.attack_type === 'port_scan') || {}).c || 0;
+  el.innerHTML = `
+    <div class="card"><div class="num">${stats.total}</div><div class="label">Total Events</div></div>
+    <div class="card"><div class="num">${honeytoken}</div><div class="label">Honeytoken Triggers</div></div>
+    <div class="card"><div class="num">${bruteForce}</div><div class="label">Brute Force</div></div>
+    <div class="card"><div class="num">${sqli}</div><div class="label">SQL Injection</div></div>
+    <div class="card"><div class="num">${xss}</div><div class="label">XSS Attempts</div></div>
+    <div class="card"><div class="num">${scans}</div><div class="label">Port Scans</div></div>
+  `;
+}
+
+function renderAlert(stats) {
+  const banner = document.getElementById('alertBanner');
+  const honeytokens = (stats.by_type.find(t => t.attack_type === 'honeytoken_triggered') || {}).c || 0;
+  if (stats.total >= ALERT_THRESHOLD && stats.by_ip.length) {
+    const top = stats.by_ip[0];
+    banner.style.display = 'block';
+    if (honeytokens > 0) {
+      banner.style.borderColor = '#bc8cff';
+      banner.style.background = 'rgba(188,140,255,0.18)';
+      banner.style.color = '#e9d5ff';
+      banner.textContent = `🚨 CRITICAL DECEPTION ALERT: IP ${top.source_ip} triggered ${honeytokens} Honeytoken(s)! Total session events: ${top.c}`;
+    } else {
+      banner.style.borderColor = 'var(--danger)';
+      banner.style.background = 'rgba(248,81,73,0.12)';
+      banner.style.color = 'var(--danger)';
+      banner.textContent = `⚠️ High Activity Grouped Alert: IP ${top.source_ip} (${top.c} events recorded)`;
+    }
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+function renderEvents(events) {
+  const tbody = document.getElementById('eventTable');
+  tbody.innerHTML = events.slice(0, 30).map(e => `
+    <tr>
+      <td>${new Date(e.timestamp).toLocaleTimeString()}</td>
+      <td>${e.service}</td>
+      <td>${e.source_ip}</td>
+      <td>${e.username || '-'}</td>
+      <td>${(e.password || e.raw_payload || '-').toString().slice(0, 40)}</td>
+      <td><span class="${badgeClass(e.attack_type)}">${e.attack_type}</span></td>
+    </tr>
+  `).join('');
+}
+
+function renderCharts(stats) {
+  const timelineLabels = stats.timeline.map(t => t.hour.slice(11, 16));
+  const timelineData = stats.timeline.map(t => t.c);
+  const typeLabels = stats.by_type.map(t => t.attack_type);
+  const typeData = stats.by_type.map(t => t.c);
+  const ipLabels = stats.by_ip.map(t => t.source_ip);
+  const ipData = stats.by_ip.map(t => t.c);
+
+  const colors = ['#f85149','#d29922','#58a6ff','#3fb950','#8b949e','#bc8cff'];
+
+  if (!timelineChart) {
+    timelineChart = new Chart(document.getElementById('timelineChart'), {
+      type: 'line',
+      data: { labels: timelineLabels, datasets: [{ label: 'Events', data: timelineData,
+        borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.15)', fill: true, tension: 0.3 }] },
+      options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } }
+    });
+    typeChart = new Chart(document.getElementById('typeChart'), {
+      type: 'doughnut',
+      data: { labels: typeLabels, datasets: [{ data: typeData, backgroundColor: colors }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { color: '#e6edf3' } } } }
+    });
+    ipChart = new Chart(document.getElementById('ipChart'), {
+      type: 'bar',
+      data: { labels: ipLabels, datasets: [{ label: 'Events', data: ipData, backgroundColor: '#f85149' }] },
+      options: { indexAxis: 'y', plugins: { legend: { display: false } } }
+    });
+  } else {
+    timelineChart.data.labels = timelineLabels;
+    timelineChart.data.datasets[0].data = timelineData;
+    timelineChart.update();
+    typeChart.data.labels = typeLabels;
+    typeChart.data.datasets[0].data = typeData;
+    typeChart.update();
+    ipChart.data.labels = ipLabels;
+    ipChart.data.datasets[0].data = ipData;
+    ipChart.update();
+  }
+}
+
+async function refresh() {
+  try {
+    const [stats, events] = await Promise.all([
+      fetch('/api/stats').then(r => r.json()),
+      fetch('/api/events').then(r => r.json())
+    ]);
+    renderStatCards(stats);
+    renderAlert(stats);
+    renderCharts(stats);
+    renderEvents(events);
+  } catch (e) {
+    console.error('refresh failed', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 3000); // live refresh every 3s
+</script>
+
+</body>
+</html>
