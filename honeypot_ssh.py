@@ -10,6 +10,7 @@ Run standalone:  python honeypot_ssh.py --port 2222
 """
 
 import argparse
+import logging
 import socket
 import threading
 import sys
@@ -18,6 +19,9 @@ import paramiko
 
 from db import init_db, log_event
 from classifier import classify
+
+# Suppress Paramiko's internal worker thread tracebacks when non-SSH clients or health probes connect
+logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
 
 # Any RSA host key works here — it's only used to establish the encrypted
 # channel, not for any real authentication.
@@ -91,10 +95,16 @@ def handle_connection(client_sock, addr):
     client_ip, client_port = addr
     transport = None
     try:
+        client_sock.settimeout(10)
         transport = paramiko.Transport(client_sock)
         transport.add_server_key(HOST_KEY)
         server = FakeSSHServer(client_ip, client_port)
-        transport.start_server(server=server)
+        try:
+            transport.start_server(server=server)
+        except Exception as e:
+            log_event(service="ssh", source_ip=client_ip, source_port=client_port,
+                      raw_payload=f"banner-probe/disconnect: {e}", attack_type="recon")
+            return
 
         # Give the client a little time to attempt auth, then close.
         chan = transport.accept(20)
@@ -106,7 +116,14 @@ def handle_connection(client_sock, addr):
                    raw_payload=f"handshake-error: {e}", attack_type="recon")
     finally:
         if transport:
-            transport.close()
+            try:
+                transport.close()
+            except Exception:
+                pass
+        try:
+            client_sock.close()
+        except Exception:
+            pass
 
 
 def run(port=2222, bind="0.0.0.0"):
