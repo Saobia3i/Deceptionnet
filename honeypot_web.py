@@ -150,8 +150,11 @@ def internal_api():
     })
 
 
-@app.route("/login", methods=["POST"])
+@app.route("/login", methods=["GET", "POST"])
 def login():
+    if request.method == "GET":
+        return render_template_string(LOGIN_PAGE, error=None)
+
     username = request.form.get("username", "")
     password = request.form.get("password", "")
     client_ip = _client_ip()

@@ -9,16 +9,128 @@ import argparse
 import io
 from datetime import datetime
 
-from flask import Flask, jsonify, send_from_directory, request, send_file
+from flask import Flask, jsonify, send_from_directory, request, send_file, render_template_string
 
-from db import init_db, all_events, stats_summary
+from db import init_db, all_events, stats_summary, log_event
+from classifier import classify, get_honeytoken_location
+from honeypot_web import LOGIN_PAGE, _client_ip, _extract_request_summary, _update_last_classification
 
 app = Flask(__name__, static_folder="dashboard", static_url_path="")
+
+
+@app.before_request
+def inspect_and_log_dashboard():
+    """Global middleware: scans headers, cookies, query, body, and URL for honeytokens or attacks."""
+    # Skip dashboard static assets and API routes
+    if request.path in ["/", "/index.html", "/backgroundImage.jpg", "/api/stats", "/api/events", "/api/report.pdf", "/robots.txt", "/config.js", "/.env"]:
+        return None
+
+    client_ip = _client_ip()
+    client_port = request.environ.get("REMOTE_PORT")
+    request_summary = _extract_request_summary()
+    location_tag = get_honeytoken_location(request_summary)
+
+    if location_tag:
+        raw_payload = f"[Honeytoken Triggered via {location_tag}] {request_summary}"
+        log_event(service="web", source_ip=client_ip, source_port=client_port, raw_payload=raw_payload, attack_type="honeytoken_triggered")
+        print(f"[HONEYTOKEN TRIGGERED] {client_ip} used token from bait location: {location_tag}")
+        
+        return jsonify({
+            "status": "success",
+            "access_granted": True,
+            "session": {
+                "token_type": "Bearer",
+                "scope": "admin:read_write",
+                "user_id": 1042,
+                "account": "Enterprise Admin",
+                "active_session": True
+            },
+            "system_status": "Operational",
+            "message": "Debug session active. Internal system logs exposed."
+        }), 200
+
+    return None
 
 
 @app.route("/")
 def index():
     return send_from_directory("dashboard", "index.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return render_template_string(LOGIN_PAGE, error=None)
+
+    username = request.form.get("username", "")
+    password = request.form.get("password", "")
+    client_ip = _client_ip()
+    client_port = request.environ.get("REMOTE_PORT")
+
+    raw_payload = f"username={username}&password={password}"
+
+    log_event(service="web", source_ip=client_ip, source_port=client_port,
+              username=username, password=password, raw_payload=raw_payload)
+    attack_type = classify(service="web", source_ip=client_ip, username=username,
+                            password=password, raw_payload=raw_payload,
+                            source_port=client_port)
+    _update_last_classification(client_ip, attack_type)
+
+    print(f"[WEB] {client_ip} tried {username}:{password} -> {attack_type}")
+
+    return render_template_string(LOGIN_PAGE, error="Invalid username or password."), 401
+
+
+@app.route("/search")
+def search():
+    q = request.args.get("q", "")
+    client_ip = _client_ip()
+
+    log_event(service="web", source_ip=client_ip, raw_payload=q)
+    attack_type = classify(service="web", source_ip=client_ip, raw_payload=q)
+    _update_last_classification(client_ip, attack_type)
+
+    return f"<p>No results found for: {q}</p><p><a href='/'>Back</a></p>"
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    content = (
+        "User-agent: *\n"
+        "Disallow: /admin/\n"
+        "Disallow: /api/v1/internal?key=dnet_honey_99PqRsTuVwXyZ1234567890AbCdEfGhIj  # HONEYTOKEN BAIT (robots_txt_disallow)\n"
+    )
+    return content, 200, {"Content-Type": "text/plain"}
+
+
+@app.route("/config.js")
+def config_js():
+    content = (
+        "// Frontend Configuration\n"
+        "window.ENV = {\n"
+        "  API_BASE: '/api/v1',\n"
+        "  API_KEY: 'dnet_honey_88AaBbCcDdEeFfGgHhIiJjKkLlMmNnOo' // HONEYTOKEN BAIT (config_js_source)\n"
+        "};\n"
+    )
+    return content, 200, {"Content-Type": "application/javascript"}
+
+
+@app.route("/.env")
+def env_file():
+    content = (
+        "ENVIRONMENT=production\n"
+        "DATABASE_URL=sqlite:///deceptionnet.db\n"
+        "SECRET_KEY=dnet_honey_77ZzYyXxWwVvUuTtSsRrQqPpOoNnMmLl  # HONEYTOKEN BAIT (env_file_leak)\n"
+    )
+    return content, 200, {"Content-Type": "text/plain"}
+
+
+@app.route("/api/v1/internal")
+def internal_api():
+    return jsonify({
+        "status": "success",
+        "data": "Internal API endpoint accessible via honeytoken."
+    })
 
 
 @app.route("/api/events")
