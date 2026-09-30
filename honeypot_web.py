@@ -56,7 +56,16 @@ LOGIN_PAGE = """
 
 
 def _client_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr)
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    x_forwarded = request.headers.get("X-Forwarded-For")
+    if x_forwarded:
+        return x_forwarded.split(",")[0].strip()
+    return request.remote_addr
 
 
 def _extract_request_summary():
