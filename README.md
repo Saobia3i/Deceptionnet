@@ -1,120 +1,108 @@
 # DeceptionNet — A Honeypot-Based Intrusion Detection & Attacker Behavior Analysis System
 
-Fake SSH, FTP, and web-login services that log every attacker interaction,
-classify it (brute force / SQL injection / XSS / port scan / recon), and
-show it live on a dashboard. Nothing here ever grants real access —
-every service always denies login.
+DeceptionNet deploys fake, intentionally exposed network services (SSH, FTP, Web Admin Login with Honeytokens) that log every attacker interaction, classify payloads (Honeytoken Triggers, Honeytoken Sessions, Brute Force, SQL Injection, XSS, Port Scan, Recon), and present real-time analytics on a live web dashboard.
 
-## 1. Setup
+---
+
+## 1. Core Architecture & Deception Mechanics
+
+* **Fake SSH Server** (`port 2222`): Speaks standard SSH handshake via Paramiko, handles non-SSH probes gracefully, and logs credentials.
+* **Fake FTP Server** (`port 2121`): Fakes standard FTP `USER`/`PASS` responses via raw sockets, always denying access.
+* **Web Admin & Honeytoken Baits** (`port 8080`): Fake admin panel with a search box and 4 multi-location Honeytokens (`dnet_honey_...` keys embedded in HTML comments, `robots.txt`, JS config, and `.env` leaks).
+* **360° Request Middleware**: Scans URLs, query parameters, `Authorization: Bearer` headers, `X-API-Key` headers, cookies, and POST bodies. Returns convincing fake JSON debug payloads (`"access_granted": true`) to trap attackers.
+* **Active Session Tagging**: Automatically flags all subsequent activity from a honeytoken-triggered IP as `honeytoken_session`.
+* **Live Dashboard & PDF Export** (`port 5000`): Real-time Chart.js analytics, grouped alert deduplication, transparent glassmorphism UI, and one-click PDF incident report generation.
+
+---
+
+## 2. Quick Setup
 
 ```bash
 pip install -r requirements.txt --break-system-packages
 ```
 
-(Drop `--break-system-packages` if you're using a virtual environment instead.)
+---
 
-## 2. Run everything
+## 3. Run Everything
 
 ```bash
 python run_all.py
 ```
 
-This starts, in one process:
+Open **[http://localhost:5000](http://localhost:5000)** in your browser for the live dashboard.
 
-| Service          | Port | Purpose                                  |
-|------------------|------|-------------------------------------------|
-| SSH honeypot     | 2222 | Fake SSH login, logs username/password    |
-| FTP honeypot     | 2121 | Fake FTP login, logs username/password    |
-| Web honeypot     | 8080 | Fake admin login + search box (SQLi/XSS)  |
-| Dashboard        | 5000 | Live view of everything above             |
+---
 
-Open **http://localhost:5000** in your browser for the dashboard.
+## 4. Generate Demo Attack Traffic
 
-## 3. Generate demo traffic
-
-In a second terminal, while `run_all.py` is still running:
+In a second terminal, run:
 
 ```bash
 python test_attacks.py
 ```
 
-This fires a realistic batch of attacks (FTP brute force, SQLi, XSS, a port
-scan) so your dashboard fills up with data instantly — useful for
-screenshots or a dry run before your live demo.
+This simulates FTP brute force, SQL injection, XSS, port scanning, and a Honeytoken trigger back-to-back in 5 seconds.
 
-## 4. Live demo script (for your instructor)
+---
 
-Instead of (or in addition to) `test_attacks.py`, do this live:
+## 5. Live Demo Commands (Step-by-Step for Presentation)
 
-1. **Brute force (SSH):**
-   ```bash
-   for pw in admin 123456 password root123 letmein toor; do
-     sshpass -p "$pw" ssh -o StrictHostKeyChecking=no -p 2222 admin@localhost
-   done
+1. **Honeytoken Deception Test (Authorization Header):**
+   ```powershell
+   curl.exe -H "Authorization: Bearer dnet_honey_88AaBbCcDdEeFfGgHhIiJjKkLlMmNnOo" http://localhost:8080/
    ```
-   (Install `sshpass` first: `apt install sshpass`. Each attempt fails —
-   that's expected — but watch the dashboard flag it as `brute_force`
-   after the 5th attempt in under a minute.)
+   *Dashboard immediately displays a purple `honeytoken_triggered` badge & critical alert.*
 
-2. **SQL injection (Web):**
-   ```bash
-   curl -X POST http://localhost:8080/login \
-        -d "username=admin' OR '1'='1&password=x"
+2. **SQL Injection (Web):**
+   ```powershell
+   curl.exe -X POST http://localhost:8080/login -d "username=admin' OR '1'='1&password=x"
    ```
-   Dashboard flags this instantly as `sqli`.
 
-3. **XSS (Web):**
-   ```bash
-   curl "http://localhost:8080/search?q=<script>alert(1)</script>"
+3. **XSS Payload (Search Box):**
+   ```powershell
+   curl.exe "http://localhost:8080/search?q=<script>alert(1)</script>"
    ```
-   Dashboard flags this as `xss`.
 
-4. **Port scan:**
-   ```bash
-   nmap -p 21,22,2121,2222,8080 localhost
+4. **FTP Brute Force:**
+   ```powershell
+   py -c "import socket; [socket.create_connection(('localhost', 2121)).sendall(f'USER admin\r\nPASS pass{i}\r\n'.encode()) for i in range(6)]"
    ```
-   Multiple ports touched quickly from the same IP → flagged `port_scan`.
-   (This is also a nice callback to your Nmap lab — you're now on the
-   *defending* side of a scan you already know how to run.)
 
-5. Click **Export PDF Report** on the dashboard to generate a written
-   summary for your submission.
+5. **PDF Export:** Click **Export PDF Report** on the dashboard or open `http://localhost:5000/api/report.pdf`.
 
-## 5. How classification works (classifier.py)
+---
 
-All rule-based, no ML — every flag is explainable:
+## 6. How Classification Works (`classifier.py`)
 
-- **SQLi** — payload matches patterns like `' OR '1'='1`, `UNION SELECT`, `--`
-- **XSS** — payload contains `<script>`, `onerror=`, `javascript:`, etc.
-- **Brute force** — 5+ attempts from the same IP within 60 seconds
-- **Port scan** — 4+ distinct ports touched by the same IP within 30 seconds
-- **Recon** — anything else (a single probe, a banner grab, etc.)
+Deterministic, 100% explainable rule-based logic:
 
-## 6. Project structure
+1. **Honeytoken Triggered** — Matches `dnet_honey_` keys or `honeytoken` keywords across request URLs, headers, or body.
+2. **SQLi** — Payload matches `' OR '1'='1`, `UNION SELECT`, or SQL comments `--`.
+3. **XSS** — Payload contains `<script>`, `onerror=`, `javascript:`, etc.
+4. **Honeytoken Session** — Subsequent traffic from an IP address with an active Honeytoken trigger.
+5. **Brute Force** — 5+ login attempts from the same IP within 60 seconds.
+6. **Port Scan** — 4+ distinct ports touched by the same IP within 30 seconds.
+7. **Recon** — Default fallback for single connections or banner probes.
+
+---
+
+## 7. Project Structure
 
 ```
 deceptionnet/
-├── db.py              # SQLite logging + query helpers
-├── classifier.py       # Rule-based attack classification
-├── honeypot_ssh.py      # Fake SSH server (paramiko)
-├── honeypot_ftp.py      # Fake FTP server (raw sockets)
-├── honeypot_web.py      # Fake admin login + search box (Flask)
-├── dashboard_api.py      # Dashboard backend + PDF export
-├── dashboard/index.html  # Dashboard frontend (Chart.js, auto-refreshes)
-├── run_all.py           # Launches everything together
-├── test_attacks.py       # Generates demo attack traffic
+├── db.py                 # Shared SQLite database layer + session tagging helpers
+├── classifier.py          # Deterministic rule-based classification engine
+├── honeypot_ssh.py        # Fake SSH server (paramiko) with robust probe handling
+├── honeypot_ftp.py        # Fake FTP server (raw sockets)
+├── honeypot_web.py        # Web honeypot + 4 multi-location Honeytoken baits
+├── dashboard_api.py        # Dashboard API + PDF report generator
+├── dashboard/
+│   ├── index.html         # Live dashboard (Chart.js, translucent Glassmorphism UI)
+│   └── backgroundImage.jpg# Cyber shield dashboard background image
+├── run_all.py             # Single-command launcher for all 4 services
+├── test_attacks.py        # Automated multi-attack simulation test suite
+├── RUN_SYSTEM.md          # Comprehensive demonstration & testing guide
+├── PROJECT_EXPLAINED.md   # Architectural & conceptual project explanation
 └── requirements.txt
 ```
 
-## 7. Extending it further (optional, for extra marks)
-
-- **Wireshark**: run a capture (`sudo tcpdump -i lo -w capture.pcap`) while
-  `test_attacks.py` runs, then open the `.pcap` in Wireshark and include
-  screenshots of the raw packets in your report — evidence beyond just the
-  dashboard.
-- **Scapy**: replace parts of `test_attacks.py` with hand-crafted Scapy
-  packets (e.g., a real SYN scan) instead of plain `socket.connect()`, to
-  show lower-level packet crafting skills.
-- **Geolocation**: in `db.py` / the honeypot files, look up `source_ip`
-  against a free API like `ip-api.com` and store the country — the schema
-  already has a `country` column ready for it.
