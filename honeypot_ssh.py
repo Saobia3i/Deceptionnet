@@ -102,8 +102,9 @@ def handle_connection(client_sock, addr):
         try:
             transport.start_server(server=server)
         except Exception as e:
-            log_event(service="ssh", source_ip=client_ip, source_port=client_port,
-                      raw_payload=f"banner-probe/disconnect: {e}", attack_type="recon")
+            if client_ip not in ["127.0.0.1", "::1"]:
+                log_event(service="ssh", source_ip=client_ip, source_port=client_port,
+                          raw_payload=f"banner-probe/disconnect: {e}", attack_type="recon")
             return
 
         # Give the client a little time to attempt auth, then close.
@@ -111,9 +112,10 @@ def handle_connection(client_sock, addr):
         if chan is not None:
             chan.close()
     except Exception as e:
-        # Malformed/non-SSH connections still count as recon activity.
-        log_event(service="ssh", source_ip=client_ip, source_port=client_port,
-                   raw_payload=f"handshake-error: {e}", attack_type="recon")
+        # Malformed/non-SSH connections from external IPs count as recon activity.
+        if client_ip not in ["127.0.0.1", "::1"]:
+            log_event(service="ssh", source_ip=client_ip, source_port=client_port,
+                       raw_payload=f"handshake-error: {e}", attack_type="recon")
     finally:
         if transport:
             try:

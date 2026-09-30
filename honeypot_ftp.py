@@ -54,17 +54,24 @@ def handle_connection(client_sock, addr):
                 client_sock.sendall(b"221 Goodbye.\r\n")
                 break
 
+            elif line.upper().startswith(("HEAD ", "GET ", "POST ")) or "HTTP/" in line.upper():
+                # Ignore internal cloud health check probes on FTP port
+                client_sock.sendall(b"530 Please login with USER and PASS.\r\n")
+                break
+
             else:
                 # Any other command before a successful login is recon (e.g. SYST, PWD probing).
-                log_event(service="ftp", source_ip=client_ip, source_port=client_port,
-                          raw_payload=line, attack_type="recon")
+                if client_ip not in ["127.0.0.1", "::1"]:
+                    log_event(service="ftp", source_ip=client_ip, source_port=client_port,
+                              raw_payload=line, attack_type="recon")
                 client_sock.sendall(b"530 Please login with USER and PASS.\r\n")
 
     except socket.timeout:
         pass
     except Exception as e:
-        log_event(service="ftp", source_ip=client_ip, source_port=client_port,
-                   raw_payload=f"error: {e}", attack_type="recon")
+        if client_ip not in ["127.0.0.1", "::1"]:
+            log_event(service="ftp", source_ip=client_ip, source_port=client_port,
+                       raw_payload=f"error: {e}", attack_type="recon")
     finally:
         client_sock.close()
 
