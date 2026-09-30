@@ -127,9 +127,13 @@ Start-Process "http://localhost:5000/api/report.pdf"
 
 ### **How to Properly View Database Contents:**
 * **Web Dashboard**: Open **[http://localhost:5000](http://localhost:5000)** in your browser.
-* **Terminal Query**:
+* **Terminal Query (All Events)**:
   ```powershell
   py -c "import sqlite3; conn = sqlite3.connect('deceptionnet.db'); print('\n'.join([str(row) for row in conn.execute('SELECT id, timestamp, service, source_ip, attack_type, raw_payload FROM events ORDER BY id DESC LIMIT 10')]))"
+  ```
+* **Terminal Query (Honeytoken Triggers Only)**:
+  ```powershell
+  py -c "import sqlite3; conn = sqlite3.connect('deceptionnet.db'); print('\n'.join(str(r) for r in conn.execute('SELECT id, timestamp, service, source_ip, attack_type, raw_payload FROM events WHERE attack_type=? ORDER BY id DESC', ('honeytoken_triggered',))))"
   ```
 * **VS Code Extension**: Install **SQLite Viewer** -> Right-click `deceptionnet.db` -> **Open Database**.
 
