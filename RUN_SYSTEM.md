@@ -1,6 +1,6 @@
 # DeceptionNet — How to Run & Demonstrate (Run Guide)
 
-This guide provides step-by-step instructions to run **DeceptionNet**, demonstrate attack detection and advanced **Honeytoken Deception** to your course instructor, and view database records.
+This guide provides step-by-step instructions to run **DeceptionNet**, demonstrate attack detection, Nmap scanner handling, single-port Cloud deployment, and advanced **Honeytoken Deception** to your course instructor.
 
 ---
 
@@ -13,9 +13,9 @@ py run_all.py
 ```
 
 ### What this does:
-Starts all 4 honeypot services and the dashboard in parallel:
-* **Dashboard & API**: [http://localhost:5000](http://localhost:5000)
-* **Web Honeypot (Admin Login, Search, & Honeytoken Baits)**: [http://localhost:8080](http://localhost:8080)
+Starts all honeypot services and the unified dashboard in parallel:
+* **Dashboard, Web Admin Bait & API**: [http://localhost:5000](http://localhost:5000)
+* **Web Honeypot Standalone Port**: [http://localhost:8080](http://localhost:8080)
 * **SSH Honeypot**: `localhost:2222`
 * **FTP Honeypot**: `localhost:2121`
 
@@ -34,6 +34,8 @@ DeceptionNet embeds realistic, Stripe/AWS-style honeytokens across 4 distinct ba
 
 ### **Global Request Middleware & Session Tagging:**
 * **360° Inspection**: Scans URLs, query parameters, `Authorization: Bearer` headers, `X-API-Key` headers, cookies, and POST bodies.
+* **Smart Proxy IP Parsing**: Extracts real client IP headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`) to resolve attacker IPs behind Cloudflare proxies, ngrok tunnels, or load balancers.
+* **Internal Loopback Health Filter**: Filters out `127.0.0.1` SSH and FTP container health probes sent by PaaS host checkers (e.g. Render).
 * **Convincing Decoy JSON Response**: When a honeytoken is triggered, the honeypot returns a fake 200 OK JSON debug session payload (`"access_granted": true`) to keep the attacker engaged.
 * **Active Session Tagging**: Once an IP triggers a honeytoken, all subsequent requests from that IP within 1 hour are automatically tagged as **`honeytoken_session`**.
 
@@ -54,7 +56,7 @@ py test_attacks.py
 ### **B. Honeytoken Deception Test (Bearer Header / API Key)**
 Simulates an attacker using a leaked API key inside an Authorization header:
 ```powershell
-curl.exe -H "Authorization: Bearer dnet_honey_88AaBbCcDdEeFfGgHhIiJjKkLlMmNnOo" http://localhost:8080/
+curl.exe -H "Authorization: Bearer dnet_honey_88AaBbCcDdEeFfGgHhIiJjKkLlMmNnOo" http://localhost:5000/
 ```
 > 📌 **What to show:** The system returns a convincing fake JSON response (`"access_granted": true`), and the dashboard immediately displays a purple **`honeytoken_triggered`** badge along with a **CRITICAL DECEPTION ALERT** banner!
 
@@ -64,13 +66,13 @@ curl.exe -H "Authorization: Bearer dnet_honey_88AaBbCcDdEeFfGgHhIiJjKkLlMmNnOo" 
 Show how an attacker discovers honeytokens via common web reconnaissance:
 ```powershell
 # 1. Inspect robots.txt disallow path
-curl.exe http://localhost:8080/robots.txt
+curl.exe http://localhost:5000/robots.txt
 
 # 2. Inspect frontend JS configuration file
-curl.exe http://localhost:8080/config.js
+curl.exe http://localhost:5000/config.js
 
 # 3. Inspect leaked .env file
-curl.exe http://localhost:8080/.env
+curl.exe http://localhost:5000/.env
 ```
 
 ---
@@ -78,7 +80,7 @@ curl.exe http://localhost:8080/.env
 ### **D. SQL Injection Attack (Web Honeypot)**
 Submits a classic `' OR '1'='1` payload to the fake admin login form:
 ```powershell
-curl.exe -X POST http://localhost:8080/login -d "username=admin' OR '1'='1&password=anything"
+curl.exe -X POST http://localhost:5000/login -d "username=admin' OR '1'='1&password=anything"
 ```
 
 ---
@@ -86,7 +88,7 @@ curl.exe -X POST http://localhost:8080/login -d "username=admin' OR '1'='1&passw
 ### **E. XSS (Cross-Site Scripting) Attack (Web Search)**
 Submits a `<script>` tag into the search box:
 ```powershell
-curl.exe "http://localhost:8080/search?q=<script>alert(1)</script>"
+curl.exe "http://localhost:5000/search?q=<script>alert(1)</script>"
 ```
 
 ---
@@ -99,7 +101,19 @@ py -c "import socket; [socket.create_connection(('localhost', 2121)).sendall(f'U
 
 ---
 
-### **G. Export Incident PDF Report**
+### **G. Cloud Deployed Nmap Testing (e.g. Render / Public URL)**
+If testing a deployed instance (e.g. `deceptionnet-e307.onrender.com`):
+```bash
+# 1. Service Version Scan (Port 80/443 HTTPS):
+nmap -sV -p 80,443 deceptionnet-e307.onrender.com
+
+# 2. Web Directory Enumeration & Honeytoken Discovery Scan:
+nmap --script=http-enum deceptionnet-e307.onrender.com
+```
+
+---
+
+### **H. Export Incident PDF Report**
 Generates and downloads a summary report for incident response auditing:
 ```powershell
 Start-Process "http://localhost:5000/api/report.pdf"
@@ -124,12 +138,21 @@ Start-Process "http://localhost:5000/api/report.pdf"
 ## 🎓 5. Instructor Presentation Script & Viva Q&A
 
 ### **30-Second Elevator Pitch**
-> *"Sir, DeceptionNet is a Honeypot-based Intrusion Detection & Threat Deception System. It deploys fake SSH, FTP, and Web services embedded with realistic, multi-location Honeytokens (Stripe/AWS-style API keys in HTML comments, robots.txt, JS config, and .env files). Because legitimate users never touch fake services or honeytokens, 100% of activity is suspicious. We trigger real-time alerts, tag attacker sessions, return convincing decoy payloads, and render live analytics on a web dashboard."*
+> *"Sir, DeceptionNet is a Honeypot-based Intrusion Detection & Threat Deception System. It deploys fake SSH, FTP, and Web services embedded with realistic, multi-location Honeytokens (Stripe/AWS-style API keys in HTML comments, robots.txt, JS config, and .env files). Because legitimate users never touch fake services or honeytokens, 100% of activity is suspicious. We resolve true attacker IPs through proxy headers, handle Nmap directory probes as recon, trigger real-time alerts, tag attacker sessions, return convincing decoy payloads, and render live analytics on a web dashboard."*
 
 ### **Key Viva Questions & Answers**
+
 1. **Why use Honeytokens alongside traditional rules?**
    * *Answer:* Traditional rules flag known attack signatures (SQLi/XSS). Honeytokens catch stealthy attackers who steal leaked credentials before they can compromise real systems — providing zero false-positive alerts.
-2. **How do you prevent alert fatigue if an attacker sends 500 requests?**
+
+2. **How does DeceptionNet handle Cloud Deployments (single-port PaaS like Render)?**
+   * *Answer:* On single-port Cloud PaaS (e.g. Render), custom raw ports (2121, 2222) are not exposed by the PaaS ingress router. We unified all Web Admin Baits, Honeytokens, and API routes onto port 5000 (HTTP/HTTPS) while maintaining raw socket honeypots for direct IP / Docker deployments.
+
+3. **How do you resolve the attacker's real IP when deployed behind Cloudflare or Reverse Proxies?**
+   * *Answer:* We inspect `CF-Connecting-IP`, `X-Real-IP`, and `X-Forwarded-For` request headers before falling back to `request.remote_addr`.
+
+4. **How do you filter noise from cloud health checkers?**
+   * *Answer:* Automated loopback health probes (`127.0.0.1`) are filtered out at the transport layer so container health checks do not flood the live event log.
+
+5. **How do you prevent alert fatigue if an attacker sends 500 requests?**
    * *Answer:* The dashboard uses grouped alert deduplication — aggregating high-frequency traffic into a single consolidated incident alert per IP.
-3. **How is production network isolation handled?**
-   * *Answer:* For local lab demos, it runs on `localhost:8080`. In a production SOC environment, honeypots are deployed on isolated VLANs/subnets with zero access to internal databases or production production credentials.
